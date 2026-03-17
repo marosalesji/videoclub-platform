@@ -209,6 +209,9 @@ cd provision/rating && terraform destroy \
     -auto-approve
 cd ../..
 cd provision/cluster && terraform destroy -auto-approve
+cd ../..
+rm provision/cluster/k3s.pem
+rm ~/.kube/config
 ```
 
 ## Referencias
