@@ -1,9 +1,9 @@
 import os
-import time
 import sys
 import json
 import logging
 import time
+import pathlib
 import psycopg2
 import boto3
 import botocore
@@ -62,17 +62,18 @@ def process_message(message, conn):
             VALUES (%s, %s, %s, %s)
         """, (movie_id, user_id, rating, review))
         conn.commit()
-    time.sleep(0.5) # this simulates a slow system
+
+    time.sleep(0.5)  # simula procesamiento lento
     logger.info(f"Rating guardado: movie_id={movie_id} user_id={user_id} rating={rating}")
 
 
 def poll():
-    logger.info(f"start poll")
+    logger.info("start poll")
     sqs = boto3.client("sqs", region_name=AWS_REGION)
-    logger.info(f"got sqs")
+    logger.info("got sqs")
     try:
         conn = get_db_connection()
-        logger.info(f"connected to db")
+        logger.info("connected to db")
     except Exception as e:
         logger.error(f"Cannot establish DB connection: {e}")
         sys.exit(1)
@@ -80,6 +81,9 @@ def poll():
     logger.info("Worker iniciado, escuchando rating-requests...")
 
     while True:
+        # Señal de vida para el liveness probe
+        pathlib.Path("/tmp/worker-alive").touch()
+
         response = sqs.receive_message(
             QueueUrl=SQS_QUEUE_URL,
             MaxNumberOfMessages=10,

@@ -10,7 +10,7 @@ docker run \
     --rm  \
     -p 8080:8080 \
     -v ~/.aws:/root/.aws:ro \
-    -e SQS_QUEUE_URL="https://sqs.us-east-1.amazonaws.com/250564954509/rating-requests" \
+    -e SQS_QUEUE_URL="https://sqs.us-east-1.amazonaws.com/<aws-account>/rating-requests" \
     -e RDS_SECRET_NAME="videoclub/rds/credentials" \
     -e AWS_DEFAULT_REGION="us-east-1" \
     rating-api:latest

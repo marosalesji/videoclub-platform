@@ -67,8 +67,7 @@ Hub. Sigue las instrucciones en cada app:
 > **Nota:** Los manifests en `provision/rating/manifests/` tienen dos valores
 que debes actualizar manualmente antes de aplicarlos:
 > - `<tu-usuario>` → tu usuario de Docker Hub
-> - `<account-id>` → tu AWS Account ID (visible en la consola arriba a la
-derecha)
+> - `<aws-account>` → tu AWS Account ID (visible en la consola arriba a la derecha)
 
 ## Verificar el despliegue
 ```bash

@@ -31,3 +31,12 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "100m"
+          livenessProbe:
+            exec:
+              command:
+                - test
+                - -f
+                - /tmp/worker-alive
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
