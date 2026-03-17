@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rating-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rating-api
+  template:
+    metadata:
+      labels:
+        app: rating-api
+    spec:
+      containers:
+        - name: rating-api
+          image: marosalesji/rating-api:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SQS_QUEUE_URL
+              value: "https://sqs.us-east-1.amazonaws.com/<aws-account>/rating-requests"
+            - name: RDS_SECRET_NAME
+              value: "videoclub/rds/credentials"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10

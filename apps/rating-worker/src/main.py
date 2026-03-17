@@ -1,0 +1,111 @@
+import os
+import time
+import sys
+import json
+import logging
+import time
+import psycopg2
+import boto3
+import botocore
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ENV vars
+SQS_QUEUE_URL = os.environ["SQS_QUEUE_URL"]
+SECRET_NAME   = os.environ["RDS_SECRET_NAME"]
+AWS_REGION    = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
+
+
+def get_secret():
+    client = boto3.client("secretsmanager", region_name=AWS_REGION)
+    try:
+        response = client.get_secret_value(SecretId=SECRET_NAME)
+    except botocore.exceptions.ClientError as e:
+        error_code = e.response["Error"]["Code"]
+        if error_code == "ResourceNotFoundException":
+            msg = f"El secreto '{SECRET_NAME}' no existe en Secrets Manager"
+        elif error_code == "AccessDeniedException":
+            msg = f"Sin permisos para acceder al secreto '{SECRET_NAME}'"
+        else:
+            msg = f"Error al obtener credenciales: {error_code}"
+        logger.error(msg)
+        raise Exception
+    except botocore.exceptions.NoCredentialsError as e:
+        logger.error(f"Error getting secret: {e}")
+        raise Exception
+    return json.loads(response["SecretString"])
+
+
+def get_db_connection():
+    secret = get_secret()
+    return psycopg2.connect(
+        host=secret["host"],
+        port=secret.get("port", 5432),
+        dbname=secret["dbname"],
+        user=secret["username"],
+        password=secret["password"]
+    )
+
+
+def process_message(message, conn):
+    body = json.loads(message["Body"])
+    movie_id = body["movie_id"]
+    user_id  = body["user_id"]
+    rating   = body["rating"]
+    review   = body.get("review")
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO ratings (movie_id, user_id, rating, review)
+            VALUES (%s, %s, %s, %s)
+        """, (movie_id, user_id, rating, review))
+        conn.commit()
+    time.sleep(0.5) # this simulates a slow system
+    logger.info(f"Rating guardado: movie_id={movie_id} user_id={user_id} rating={rating}")
+
+
+def poll():
+    logger.info(f"start poll")
+    sqs = boto3.client("sqs", region_name=AWS_REGION)
+    logger.info(f"got sqs")
+    try:
+        conn = get_db_connection()
+        logger.info(f"connected to db")
+    except Exception as e:
+        logger.error(f"Cannot establish DB connection: {e}")
+        sys.exit(1)
+
+    logger.info("Worker iniciado, escuchando rating-requests...")
+
+    while True:
+        response = sqs.receive_message(
+            QueueUrl=SQS_QUEUE_URL,
+            MaxNumberOfMessages=10,
+            WaitTimeSeconds=10
+        )
+
+        messages = response.get("Messages", [])
+        if not messages:
+            logger.info("Queue vacía, esperando...")
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        for message in messages:
+            try:
+                process_message(message, conn)
+                sqs.delete_message(
+                    QueueUrl=SQS_QUEUE_URL,
+                    ReceiptHandle=message["ReceiptHandle"]
+                )
+            except Exception as e:
+                logger.error(f"Error procesando mensaje: {e}")
+                # No eliminamos el mensaje para que vuelva a la queue
+                # después de que expire el visibility timeout
+
+        time.sleep(POLL_INTERVAL)
+
+
+if __name__ == "__main__":
+    poll()
