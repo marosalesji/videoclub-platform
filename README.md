@@ -217,3 +217,4 @@ rm ~/.kube/config
 
 - [k3s](https://k3s.io/)
 - [curso cloud-computing-gdl](https://github.com/marosalesji/cloud-computing-gdl)
+- [deepwiki](https://deepwiki.com/marosalesji/videoclub-platform)
