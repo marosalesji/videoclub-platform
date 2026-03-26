@@ -34,6 +34,8 @@ CONTROLLER_IP=$(terraform output -raw controller_public_ip)
 ### Desde tu laptop
 
 ```bash
+mkdir -p ~/.kube
+
 # Copiar el kubeconfig desde el controller
 ssh -i k3s.pem ubuntu@$CONTROLLER_IP \
   "sudo cat /etc/rancher/k3s/k3s.yaml" | \
