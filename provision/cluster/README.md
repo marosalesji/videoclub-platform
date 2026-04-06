@@ -18,7 +18,7 @@ terraform plan
 terraform apply -auto-approve
 
 # Si es necesario forzar la recreación de las instancias
-terraform apply -replace="aws_instance.controller" -replace="aws_instance.worker"
+# terraform apply -replace="aws_instance.controller" -replace="aws_instance.worker"
 ```
 
 Extraer la llave privada y la IP del controller:
