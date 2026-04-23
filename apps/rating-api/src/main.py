@@ -1,11 +1,11 @@
-import os
 import json
 import logging
-import boto3
-import psycopg2
-import botocore
-import watchtower
+import os
 
+import boto3
+import botocore
+import psycopg2
+import watchtower
 from fastapi import FastAPI
 from pydantic import BaseModel, field_validator
 
@@ -16,22 +16,27 @@ app = FastAPI()
 
 # ENV vars
 SQS_QUEUE_URL = os.environ["SQS_QUEUE_URL"]
-SECRET_NAME   = os.environ["RDS_SECRET_NAME"]
-AWS_REGION    = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+SECRET_NAME = os.environ["RDS_SECRET_NAME"]
+AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
-logger.addHandler(watchtower.CloudWatchLogHandler(
-    log_group="/videoclub/rating-api",
-    boto3_client=boto3.client("logs", region_name=AWS_REGION),
-))
+logger.addHandler(
+    watchtower.CloudWatchLogHandler(
+        log_group="/videoclub/rating-api",
+        boto3_client=boto3.client("logs", region_name=AWS_REGION),
+    )
+)
+
+FORCE_DB_CRASH = os.environ.get("FORCE_DB_CRASH", "false").lower() == "true"
 
 cloudwatch_metrics = boto3.client("cloudwatch", region_name=AWS_REGION)
+
 
 def _push_db_metric(error: bool):
     cloudwatch_metrics.put_metric_data(
         Namespace="Videoclub",
         MetricData=[
             {"MetricName": "DBRequests", "Value": 1, "Unit": "Count"},
-            {"MetricName": "DBErrors",   "Value": 1 if error else 0, "Unit": "Count"},
+            {"MetricName": "DBErrors", "Value": 1 if error else 0, "Unit": "Count"},
         ],
     )
 
@@ -56,7 +61,6 @@ def get_secret():
     return json.loads(response["SecretString"])
 
 
-
 def get_db_connection():
     secret = get_secret()
     return psycopg2.connect(
@@ -64,15 +68,15 @@ def get_db_connection():
         port=secret.get("port", 5432),
         dbname=secret["dbname"],
         user=secret["username"],
-        password=secret["password"]
+        password=secret["password"],
     )
 
 
 class RatingRequest(BaseModel):
     movie_id: int
-    user_id:  int
-    rating:   int
-    review:   str | None = None
+    user_id: int
+    rating: int
+    review: str | None = None
 
     @field_validator("rating")
     @classmethod
@@ -93,17 +97,24 @@ class RatingRequest(BaseModel):
 def submit_rating(request: RatingRequest):
     conn = None
     try:
+        if FORCE_DB_CRASH:
+            logger.error("FORCE_DB_CRASH activado")
+            raise Exception("FORCE_DB_CRASH")
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM movies WHERE movie_id = %s", (request.movie_id,))
             if cur.fetchone() is None:
-                logger.warning(f"movie_id {request.movie_id} no existe, transaccion descartada")
+                logger.warning(
+                    f"movie_id {request.movie_id} no existe, transaccion descartada"
+                )
                 _push_db_metric(error=False)
                 return {"status": "discarded", "reason": "movie not found"}
 
             cur.execute("SELECT 1 FROM users WHERE user_id = %s", (request.user_id,))
             if cur.fetchone() is None:
-                logger.warning(f"user_id {request.user_id} no existe, transaccion descartada")
+                logger.warning(
+                    f"user_id {request.user_id} no existe, transaccion descartada"
+                )
                 _push_db_metric(error=False)
                 return {"status": "discarded", "reason": "user not found"}
         _push_db_metric(error=False)
@@ -118,20 +129,28 @@ def submit_rating(request: RatingRequest):
     sqs = boto3.client("sqs", region_name=AWS_REGION)
     sqs.send_message(
         QueueUrl=SQS_QUEUE_URL,
-        MessageBody=json.dumps({
-            "movie_id": request.movie_id,
-            "user_id":  request.user_id,
-            "rating":   request.rating,
-            "review":   request.review
-        })
+        MessageBody=json.dumps(
+            {
+                "movie_id": request.movie_id,
+                "user_id": request.user_id,
+                "rating": request.rating,
+                "review": request.review,
+            }
+        ),
     )
-    logger.info(f"Rating encolado: movie_id={request.movie_id} user_id={request.user_id} rating={request.rating}")
+    logger.info(
+        f"Rating encolado: movie_id={request.movie_id} user_id={request.user_id} rating={request.rating}"
+    )
     return {"status": "enqueued"}
+
 
 @app.get("/ratings/{movie_id}")
 def get_ratings(movie_id: int):
     conn = None
     try:
+        if FORCE_DB_CRASH:
+            logger.error("FORCE_DB_CRASH activado")
+            raise Exception("FORCE_DB_CRASH")
         conn = get_db_connection()
         with conn.cursor() as cur:
             # Verificar que el movie existe
@@ -142,12 +161,15 @@ def get_ratings(movie_id: int):
                 return {"status": "not found", "movie_id": movie_id}
 
             # Obtener ratings
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT user_id, rating, review, created_at
                 FROM ratings
                 WHERE movie_id = %s
                 ORDER BY created_at DESC
-            """, (movie_id,))
+            """,
+                (movie_id,),
+            )
             rows = cur.fetchall()
             _push_db_metric(error=False)
             return {
@@ -159,10 +181,10 @@ def get_ratings(movie_id: int):
                         "user_id": r[0],
                         "rating": r[1],
                         "review": r[2],
-                        "created_at": r[3].isoformat()
+                        "created_at": r[3].isoformat(),
                     }
                     for r in rows
-                ]
+                ],
             }
     except Exception as e:
         logger.error(f"DB error en get_ratings: {e}")
@@ -171,6 +193,7 @@ def get_ratings(movie_id: int):
     finally:
         if conn:
             conn.close()
+
 
 @app.get("/health")
 def health():

@@ -19,6 +19,7 @@ SECRET_NAME = os.environ["RDS_SECRET_NAME"]
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
 HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL_SECONDS", "300"))
+FORCE_CRITICAL_CRASH = os.environ.get("FORCE_CRITICAL_CRASH", "false").lower() == "true"
 
 logger.addHandler(
     watchtower.CloudWatchLogHandler(
@@ -96,6 +97,10 @@ def poll():
         sys.exit(1)
 
     logger.info("Worker iniciado, escuchando rating-requests...")
+
+    if FORCE_CRITICAL_CRASH:
+        logger.error("FORCE_CRITICAL_CRASH activado")
+        raise Exception("FORCE_CRITICAL_CRASH")
 
     last_heartbeat = 0
     while True:
