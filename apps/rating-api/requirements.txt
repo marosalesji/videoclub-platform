@@ -1,4 +1,5 @@
-fastapi
-uvicorn
-boto3
-psycopg2-binary
+fastapi==0.136.0
+uvicorn==0.45.0
+boto3==1.42.94
+psycopg2-binary==2.9.12
+watchtower==3.4.0

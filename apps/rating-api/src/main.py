@@ -4,6 +4,7 @@ import logging
 import boto3
 import psycopg2
 import botocore
+import watchtower
 
 from fastapi import FastAPI
 from pydantic import BaseModel, field_validator
@@ -17,6 +18,22 @@ app = FastAPI()
 SQS_QUEUE_URL = os.environ["SQS_QUEUE_URL"]
 SECRET_NAME   = os.environ["RDS_SECRET_NAME"]
 AWS_REGION    = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+
+logger.addHandler(watchtower.CloudWatchLogHandler(
+    log_group="/videoclub/rating-api",
+    boto3_client=boto3.client("logs", region_name=AWS_REGION),
+))
+
+cloudwatch_metrics = boto3.client("cloudwatch", region_name=AWS_REGION)
+
+def _push_db_metric(error: bool):
+    cloudwatch_metrics.put_metric_data(
+        Namespace="Videoclub",
+        MetricData=[
+            {"MetricName": "DBRequests", "Value": 1, "Unit": "Count"},
+            {"MetricName": "DBErrors",   "Value": 1 if error else 0, "Unit": "Count"},
+        ],
+    )
 
 
 def get_secret():
@@ -74,20 +91,29 @@ class RatingRequest(BaseModel):
 
 @app.post("/rating")
 def submit_rating(request: RatingRequest):
-    conn = get_db_connection()
+    conn = None
     try:
+        conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM movies WHERE movie_id = %s", (request.movie_id,))
             if cur.fetchone() is None:
                 logger.warning(f"movie_id {request.movie_id} no existe, transaccion descartada")
+                _push_db_metric(error=False)
                 return {"status": "discarded", "reason": "movie not found"}
 
             cur.execute("SELECT 1 FROM users WHERE user_id = %s", (request.user_id,))
             if cur.fetchone() is None:
                 logger.warning(f"user_id {request.user_id} no existe, transaccion descartada")
+                _push_db_metric(error=False)
                 return {"status": "discarded", "reason": "user not found"}
+        _push_db_metric(error=False)
+    except Exception as e:
+        logger.error(f"DB error en submit_rating: {e}")
+        _push_db_metric(error=True)
+        raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
     sqs = boto3.client("sqs", region_name=AWS_REGION)
     sqs.send_message(
@@ -104,13 +130,15 @@ def submit_rating(request: RatingRequest):
 
 @app.get("/ratings/{movie_id}")
 def get_ratings(movie_id: int):
-    conn = get_db_connection()
+    conn = None
     try:
+        conn = get_db_connection()
         with conn.cursor() as cur:
             # Verificar que el movie existe
             cur.execute("SELECT title FROM movies WHERE movie_id = %s", (movie_id,))
             movie = cur.fetchone()
             if movie is None:
+                _push_db_metric(error=False)
                 return {"status": "not found", "movie_id": movie_id}
 
             # Obtener ratings
@@ -121,7 +149,7 @@ def get_ratings(movie_id: int):
                 ORDER BY created_at DESC
             """, (movie_id,))
             rows = cur.fetchall()
-
+            _push_db_metric(error=False)
             return {
                 "movie_id": movie_id,
                 "title": movie[0],
@@ -136,8 +164,13 @@ def get_ratings(movie_id: int):
                     for r in rows
                 ]
             }
+    except Exception as e:
+        logger.error(f"DB error en get_ratings: {e}")
+        _push_db_metric(error=True)
+        raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @app.get("/health")
 def health():
