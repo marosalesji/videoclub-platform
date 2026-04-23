@@ -1,21 +1,34 @@
-import os
-import sys
 import json
 import logging
-import time
+import os
 import pathlib
-import psycopg2
+import sys
+import time
+
 import boto3
 import botocore
+import psycopg2
+import watchtower
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ENV vars
 SQS_QUEUE_URL = os.environ["SQS_QUEUE_URL"]
-SECRET_NAME   = os.environ["RDS_SECRET_NAME"]
-AWS_REGION    = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+SECRET_NAME = os.environ["RDS_SECRET_NAME"]
+AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
+HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL_SECONDS", "300"))
+FORCE_CRITICAL_CRASH = os.environ.get("FORCE_CRITICAL_CRASH", "false").lower() == "true"
+
+logger.addHandler(
+    watchtower.CloudWatchLogHandler(
+        log_group="/videoclub/rating-worker",
+        boto3_client=boto3.client("logs", region_name=AWS_REGION),
+    )
+)
+
+cloudwatch_metrics = boto3.client("cloudwatch", region_name=AWS_REGION)
 
 
 def get_secret():
@@ -45,26 +58,31 @@ def get_db_connection():
         port=secret.get("port", 5432),
         dbname=secret["dbname"],
         user=secret["username"],
-        password=secret["password"]
+        password=secret["password"],
     )
 
 
 def process_message(message, conn):
     body = json.loads(message["Body"])
     movie_id = body["movie_id"]
-    user_id  = body["user_id"]
-    rating   = body["rating"]
-    review   = body.get("review")
+    user_id = body["user_id"]
+    rating = body["rating"]
+    review = body.get("review")
 
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO ratings (movie_id, user_id, rating, review)
             VALUES (%s, %s, %s, %s)
-        """, (movie_id, user_id, rating, review))
+        """,
+            (movie_id, user_id, rating, review),
+        )
         conn.commit()
 
     time.sleep(0.5)  # simula procesamiento lento
-    logger.info(f"Rating guardado: movie_id={movie_id} user_id={user_id} rating={rating}")
+    logger.info(
+        f"Rating guardado: movie_id={movie_id} user_id={user_id} rating={rating}"
+    )
 
 
 def poll():
@@ -80,14 +98,26 @@ def poll():
 
     logger.info("Worker iniciado, escuchando rating-requests...")
 
+    if FORCE_CRITICAL_CRASH:
+        logger.error("FORCE_CRITICAL_CRASH activado")
+        raise Exception("FORCE_CRITICAL_CRASH")
+
+    last_heartbeat = 0
     while True:
-        # Señal de vida para el liveness probe
         pathlib.Path("/tmp/worker-alive").touch()
 
+        now = time.time()
+        if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+            cloudwatch_metrics.put_metric_data(
+                Namespace="Videoclub",
+                MetricData=[
+                    {"MetricName": "WorkerHeartbeat", "Value": 1, "Unit": "Count"}
+                ],
+            )
+            last_heartbeat = now
+
         response = sqs.receive_message(
-            QueueUrl=SQS_QUEUE_URL,
-            MaxNumberOfMessages=10,
-            WaitTimeSeconds=10
+            QueueUrl=SQS_QUEUE_URL, MaxNumberOfMessages=10, WaitTimeSeconds=10
         )
 
         messages = response.get("Messages", [])
@@ -100,8 +130,7 @@ def poll():
             try:
                 process_message(message, conn)
                 sqs.delete_message(
-                    QueueUrl=SQS_QUEUE_URL,
-                    ReceiptHandle=message["ReceiptHandle"]
+                    QueueUrl=SQS_QUEUE_URL, ReceiptHandle=message["ReceiptHandle"]
                 )
             except Exception as e:
                 logger.error(f"Error procesando mensaje: {e}")

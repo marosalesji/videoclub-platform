@@ -24,6 +24,8 @@ spec:
               value: "videoclub/rds/credentials"
             - name: AWS_DEFAULT_REGION
               value: "us-east-1"
+            - name: FORCE_DB_CRASH
+              value: "false"
           resources:
             requests:
               memory: "128Mi"

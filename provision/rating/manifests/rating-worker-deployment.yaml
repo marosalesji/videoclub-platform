@@ -24,6 +24,10 @@ spec:
               value: "us-east-1"
             - name: POLL_INTERVAL_SECONDS
               value: "5"
+            - name: HEARTBEAT_INTERVAL_SECONDS
+              value: "10"
+            - name: FORCE_CRITICAL_CRASH
+              value: "false"
           resources:
             requests:
               memory: "128Mi"
